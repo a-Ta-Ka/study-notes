@@ -217,7 +217,7 @@ catkin_make             //进行一个编译
 source devel/setup.bash   //让系统找得到你的功能包、库
 ```
 
-### 功能包
+### 功能包 
 
 创造功能包
 ```cpp
@@ -699,8 +699,438 @@ logging 中的 Console 是用来查看输出与报错信息的，还能关键字
 
 visualization 中的 plot 是用来绘制数据的，看数据波形挺好的
 
-logging 中的 bag 是用来监听并记录数据信息的，或者复现监听文件（记住publish
+logging 中的 bag 是用来监听并记录数据信息的，或者复现监听文件（记的publish
+
+configuration 中的 Dtbanuc Reconfigure 用来进行动态参数的调节
 ## 动态参数
 
+#### **概念**
 
+一种可以在运行时更新参数而无需重启节点的参数配置策略。
+#### **作用**
+主要应用于需要动态更新参数的场景，比如参数调试、功能切换等。典型应用:导航时参数的动态调试。
+
+#### 客户端实现
+
+**添加.cfg文件**,然后给它权限`chmod +x src/包名/cfg/dr.cfg`
+```python
+#! /usr/bin/env python
+"""
+ 4生成动态参数 int,double,bool,string,列表
+ 5实现流程:
+ 6    1.导包
+ 7    2.创建生成器
+ 8    3.向生成器添加若干参数
+ 9    4.生成中间文件并退出
+10
+"""
+# 导入参数生成器，这里是把A里的B全部导入进去了
+from dynamic_reconfigure.parameter_generator_catkin import *
+
+# 生成的文件放在哪个功能包名下
+PACKAGE = "demo02_dr"
+
+# 创建生成器实例
+gen = ParameterGenerator()
+
+# 向生成器添加若干参数
+# 名字，类型，分组级别，描述，默认值，最小值，最大值
+gen.add("int_param",int_t,0,"整型参数",50,0,100)
+gen.add("double_param",double_t,0,"浮点参数",1.57,0,3.14)
+gen.add("string_param",str_t,0,"字符串参数","hello world ")
+gen.add("bool_param",bool_t,0,"bool参数",True)
+
+# gen.const(名字，类型，实际数值，描述)定义选项
+# gen.enum([const][][],名字)，生成菜单
+many_enum = gen.enum([gen.const("small",int_t,0,"a small size"),
+                gen.const("mediun",int_t,1,"a medium size"),
+                gen.const("big",int_t,2,"a big size")
+                ],"a car size set")
+
+# edit_method用来指定为枚举
+gen.add("list_param",int_t,0,"列表参数",0,0,2, edit_method=many_enum)
+
+# 4.生成中间文件并退出，参数分别是包名，节点名，文件名前缀drConfig.h
+exit(gen.generate(PACKAGE,"dr_node","dr"))
+```
+
+**配置 CMakeLists.txt**
+```bash
+generate_dynamic_reconfigure_options(
+  cfg/dr.cfg
+)
+```
+
+
+#### 服务端实现
+
+代码
+```cpp
+#include "ros/ros.h"
+#include "dynamic_reconfigure/server.h"  引入动态参数服务端的头文件
+#include "demo02_dr/drConfig.h"          引入我们的.cfg
+ /*  
+    动态参数服务端: 参数被修改时直接打印
+    实现流程:
+        1.包含头文件
+        2.初始化 ros 节点
+        3.创建服务器对象
+        4.创建回调对象(使用回调函数，打印修改后的参数)
+        5.服务器对象调用回调对象
+        6.spin()
+*/
+
+void cb(demo02_dr::drConfig& config, uint32_t level){
+    ROS_INFO("动态参数解析数据:%d,%.2f,%d,%s,%d",
+        config.int_param,
+        config.double_param,
+        config.bool_param,
+        config.string_param.c_str(),
+        config.list_param
+    );
+}
+
+int main(int argc, char *argv[])
+{
+    //设置本地化环境，让我们能打中文
+    setlocale(LC_ALL,"");
+    
+    // 初始化 ros 节点
+    ros::init(argc,argv,"dr");
+    
+    // 创建动态参数服务器对象，输入我们的cfg.h
+    dynamic_reconfigure::Server<demo02_dr::drConfig> server;
+    
+    //注册&&把一个普通函数包装成可调用对象
+    //其中第二个函数(传入的函数，第一个实参，第二个实参)
+    server.setCallback(boost::bind(&cb, _1, _2));
+    
+    ros::spin();
+    return 0;
+}
+```
+
+
+## pluginlib
+pluginlib 是 ROS 的插件加载框架：主程序只依赖抽象基类，具体功能以插件形式编译成动态库，在运行时按名字动态加载。作用是把"主程序"与"功能实现"分开来，支持不重启、不重编主程序就切换或扩展功能。
+
+**它的优点：**
+- 结构清晰；
+    
+- 低耦合，易修改，可维护性强；
+    
+- 可移植性强，更具复用性；
+    
+- 结构容易调整，插件可以自由增减；
+
+### 使用
+
+创造功能包的时候多加上依赖   `pluginlib`
+之后就配置 .vascode/c_cpp_properties.json文件中关于 includepath 选项的设置
+```cpp
+{
+    "configurations": [
+        {
+            "browse": {
+                "databaseFilename": "",
+                "limitSymbolsToIncludedHeaders": true
+            },
+            "includePath": [
+                "/opt/ros/noetic/include/**",
+                "/usr/include/**",
+                "/.../yyy工作空间/功能包/include/**" //配置 head 文件的路径 ,       如"/root/ros_ws/src/plugin/include/**"
+            ],
+            "name": "ROS",
+            "intelliSenseMode": "gcc-x64",
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "c11",
+            "cppStandard": "c++17"
+        }
+    ],
+    "version": 4
+}
+
+```
+
+在 xxx/include/xxx下新建C++头文件: polygon_base.h，创造基类
+```cpp
+#ifndef XXX_POLYGON_BASE_H_   //头文件卫士，名字一般是此文件名全大写
+#define XXX_POLYGON_BASE_H_
+
+namespace polygon_base       //开一个与其他环境隔开的命名空间
+{
+  class RegularPolygon       //正常创造基类了
+  {
+    public:
+      virtual void initialize(double side_length) = 0;
+      virtual double area() = 0;
+      virtual ~RegularPolygon(){}
+
+    protected:
+      RegularPolygon(){}
+  };
+};
+#endif
+```
+
+在 xxx/include/xxx下新建C++头文件:polygon_plugins.h，创造衍生类，也就是插件
+```cpp
+#ifndef XXX_POLYGON_PLUGINS_H_
+#define XXX_POLYGON_PLUGINS_H_
+#include <xxx/polygon_base.h>   //基类的地址
+#include <cmath>
+
+namespace polygon_plugins   //正常写库
+{
+  class Triangle : public polygon_base::RegularPolygon
+  {
+    public:
+      Triangle(){}
+
+      void initialize(double side_length)
+      {
+        side_length_ = side_length;
+      }
+
+      double area()
+      {
+        return 0.5 * side_length_ * getHeight();
+      }
+
+      double getHeight()
+      {
+        return sqrt((side_length_ * side_length_) - ((side_length_ / 2) * (side_length_ / 2)));
+      }
+
+    private:
+      double side_length_;
+  };
+
+  class Square : public polygon_base::RegularPolygon
+  {
+    public:
+      Square(){}
+
+      void initialize(double side_length)
+      {
+        side_length_ = side_length;
+      }
+
+      double area()
+      {
+        return side_length_ * side_length_;
+      }
+
+    private:
+      double side_length_;
+
+  };
+};
+#endif
+```
+
+在 src 目录下新建 polygon_plugins.cpp 文件，也就是注册插件
+```cpp
+//pluginlib 宏，可以注册插件类
+#include <pluginlib/class_list_macros.h>
+#include <xxx/polygon_base.h>
+#include <xxx/polygon_plugins.h>
+
+//参数1:衍生类 参数2:基类
+PLUGINLIB_EXPORT_CLASS(polygon_plugins::Triangle, polygon_base::RegularPolygon)
+PLUGINLIB_EXPORT_CLASS(polygon_plugins::Square, polygon_base::RegularPolygon)
+```
+
+接下来就是在 CMakeLists.txt 文件里构件插件库了
+
+```cmake
+include_directories(include)    # 在本包下，告诉如何去找.h
+add_library(polygon_plugins src/polygon_plugins.cpp)  #插件动态库
+```
+
+
+还有xml的配置，功能包下新建文件:polygon_plugins.xml
+```xml
+<!-- 插件库的相对路径，生成在devel那里 -->
+<library path="lib/libpolygon_plugins">
+  <!-- type="插件类" base_class_type="基类"，后面是类名字 -->
+  <class type="polygon_plugins::Triangle" base_class_type="polygon_base::RegularPolygon">
+    <!-- 描述信息 -->
+    <description>This is a triangle plugin.</description>
+  </class>
+  <class type="polygon_plugins::Square" base_class_type="polygon_base::RegularPolygon">
+    <description>This is a square plugin.</description>
+  </class>
+</library>
+```
+
+再再在package.xml文件尾巴下设置如下内容，plugin等于上一步xml文件地址
+```xml
+<export>
+  <xxx(包名) plugin="${prefix}/polygon_plugins.xml" />
+</export>
+```
+
+### 实现
+在src 下新建c++文件:polygon_loader.cpp
+```cpp
+//类加载器相关的头文件
+#include <pluginlib/class_loader.h>
+#include <xxx/polygon_base.h>
+
+int main(int argc, char** argv)
+{
+  //类加载器 -- 参数1:，包名 参数2:基类文件名库
+  pluginlib::ClassLoader<polygon_base::RegularPolygon> poly_loader("xxx", "polygon_base::RegularPolygon");
+
+  try   //框定感受出错的范围
+  {
+    //创建插件类实例 -- 参数:插件类全限定名称，初始化
+    boost::shared_ptr<polygon_base::RegularPolygon> triangle = poly_loader.createInstance("polygon_plugins::Triangle");
+    triangle->initialize(10.0);
+
+    boost::shared_ptr<polygon_base::RegularPolygon> square = poly_loader.createInstance("polygon_plugins::Square");
+    square->initialize(10.0);
+
+    ROS_INFO("Triangle area: %.2f", triangle->area());
+    ROS_INFO("Square area: %.2f", square->area());
+  }
+  catch(...) //直接接住所有异常
+  {
+    ROS_ERROR("The plugin failed to load for some reason. Error: %s", ex.what()); //返回错误描述字符串
+  }
+
+  return 0;
+}
+```
+
+然后再修改CMakeLists.txt文件
+```camke
+add_executable(polygon_loader src/polygon_loader.cpp)
+target_link_libraries(polygon_loader ${catkin_LIBRARIES})
+```
 ## nodelet
+
+Nodelet 是一种把多个节点合并到同一个进程里运行的机制，目的是消除节点间通信的进程开销和拷贝开销，实现零拷贝、高吞吐的数据传递。
+
+我们可以创造多个可动被动态加载进nodelet管理器的nodelet进程。
+
+### 有关nodelet的使用
+
+首先是一些相关的语法
+```cpp
+nodelet load pkg/Type manager - 加载一个nodelet插件到指定manager进程
+nodelet standalone pkg/Type   - 把一个nodelet单独作为一个节点使用
+nodelet unload name manager   - 卸载指定manager里的指定插件(注意name)
+nodelet manager               - 启动一个manager进程
+```
+
+下面是一些命令行里的相关示例
+```bash
+rosrun nodelet nodelet manager __name:=mymanager
+
+rosrun nodelet nodelet load nodelet_tutorial_math/Plus mymanager __name:=n1 _value:=100
+
+rosrun nodelet nodelet load nodelet_tutorial_math/Plus mymanager __name:=n2 _value:=-50 /n2/in:=/n1/out
+# 命名，加载普通私有变量，重映射
+# __是特殊参数的定义，_就是自己定义的普通参数
+```
+### 实现nodelet
+
+由于本质插件，其实和插件的实现很相似，而且不用自定义接口、不用使用类加载器加载插件类。
+
+首先新建功能包，导入  roscpp   nodelet;
+然后创造插件类并注册插件，和pluginlib的创造衍生类相似
+```cpp
+#include "nodelet/nodelet.h"
+#include "pluginlib/class_list_macros.h"
+#include "ros/ros.h"
+#include "std_msgs/Float64.h"
+
+namespace nodelet_demo_ns {
+class MyPlus: public nodelet::Nodelet {
+    public:
+    MyPlus(){
+        value = 0.0;
+    }
+    
+    //这个函数在节点初始化后会自动调用，相当于节点初始化？
+    void onInit(){
+        //获取 NodeHandle
+        ros::NodeHandle& nh = getPrivateNodeHandle();//返回私有命名空间，这个具体名字在后面的launch里面定义
+        //从参数服务器获取参数
+        nh.getParam("value",value);
+        //创建发布与订阅对象
+        pub = nh.advertise<std_msgs::Float64>("out",100);
+        sub = nh.subscribe<std_msgs::Float64>("in",100,&MyPlus::doCb,this); //由于是类里面的回调函数，所以要this指定是谁在调用
+
+    }
+    //回调函数
+    void doCb(const std_msgs::Float64::ConstPtr& p){
+        double num = p->data;
+        //数据处理
+        double result = num + value;
+        std_msgs::Float64 r;
+        r.data = result;
+        //发布
+        pub.publish(r);
+    }
+    private:
+    ros::Publisher pub;
+    ros::Subscriber sub;
+    double value;
+
+};
+}
+//闭合这个命名空间和注册宏
+PLUGINLIB_EXPORT_CLASS(nodelet_demo_ns::MyPlus,nodelet::Nodelet)
+```
+
+写好后我们就可以去构造插件库了
+```cmake
+...
+add_library(mynodeletlib # 顺便起的插件库名字，在xml里面会用到
+  src/myplus.cpp         # 指定加入的文件
+)
+...
+target_link_libraries(mynodeletlib  # 要和上面的一样
+  ${catkin_LIBRARIES}
+)
+```
+
+新建 xml 文件，名称自定义,如:my_plus.xml（给插件库的解释）
+```xml
+<!-- lib+插件库名 -->
+<library path="lib/libmynodeletlib">   
+    <class name="demo04_nodelet/MyPlus"   type="nodelet_demo_ns::MyPlus" base_class_type="nodelet::Nodelet" ><!-- name要写在launch里的args，然后是 衍生类 和 基类 -->
+        <description>hello</description>
+    </class>
+</library>
+```
+
+跳到package.xml在最底下写上这坨，用来导出插件
+```xml
+<export>
+    <!-- Other tools can request additional information be placed here -->
+    <nodelet plugin="${prefix}/my_plus.xml" />
+</export>
+```
+
+最后可以写个launch，来执行nodelet
+```xml
+<launch>
+<!-- pkg：用哪个包   type：哪个可执行程序   name：决定私有命名空间   args：加载命令，要和xml里面的name一致 -->
+    <node pkg="nodelet" type="nodelet" name="my" args="manager" output="screen" />
+    <node pkg="nodelet" type="nodelet" name="p1" args="load demo04_nodelet/MyPlus my" output="screen">
+        <param name="value" value="100" />
+        
+        <!-- 话题重映射，把发到/p1/out 的消息改为发到 /con -->
+        <remap from="/p1/out" to="con" />  
+    </node>
+    <node pkg="nodelet" type="nodelet" name="p2" args="load demo04_nodelet/MyPlus my" output="screen">
+        <param name="value" value="-50" />
+        <remap from="/p2/in" to="con" />
+    </node>
+
+</launch>
+```
